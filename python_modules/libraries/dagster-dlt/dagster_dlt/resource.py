@@ -94,7 +94,6 @@ class DagsterDltResource(ConfigurableResource):
         resource: DltResource,
         load_info: LoadInfo,
         dlt_pipeline: Pipeline,
-        child_table_name: Optional[str] = None,
     ) -> Mapping[str, Any]:
         """Helper method to extract dlt resource metadata from load info dict.
 
@@ -123,7 +122,7 @@ class DagsterDltResource(ConfigurableResource):
         base_metadata = {k: v for k, v in load_info_dict.items() if k in dlt_base_metadata_types}
         default_schema = dlt_pipeline.default_schema
         normalized_table_name = default_schema.naming.normalize_table_identifier(
-            str(child_table_name if child_table_name else resource.name)
+            str(resource.name)
         )
         # job metadata for specific target `normalized_table_name`
         base_metadata["jobs"] = [
@@ -153,15 +152,16 @@ class DagsterDltResource(ConfigurableResource):
             table_name = ".".join([destination_name, schema, normalized_table_name])
 
         child_table_names = [
-            name
-            for name in default_schema.data_table_names()
-            if name.startswith(f"{normalized_table_name}__")
+            table_dict['name']
+            for table_dict in default_schema.data_tables()
+            if table_dict['name'].startswith(f"{normalized_table_name}__")
+            or (table_dict['resource'] == normalized_table_name and table_dict['name'] != table_dict['resource'])
         ]
+
         child_table_schemas = {
             table_name: self._extract_table_schema_metadata(table_name, default_schema)
             for table_name in child_table_names
         }
-
         table_schema = self._extract_table_schema_metadata(normalized_table_name, default_schema)
 
         base_metadata = {
@@ -293,32 +293,12 @@ class DagsterDltResource(ConfigurableResource):
             asset_key,
             dlt_source_resource,
         ) in asset_key_dlt_source_resource_mapping.items():
-            default_schema = dlt_pipeline.default_schema
-            normalized_table_name = default_schema.naming.normalize_table_identifier(
-                str(dlt_source_resource.name)
+            metadata = self.extract_resource_metadata(
+                context, dlt_source_resource, load_info, dlt_pipeline
             )
-            child_table_names = [
-                k for k, v in default_schema.tables.items() if v['resource'] == normalized_table_name and k != v['resource']
-            ]
 
-            if child_table_names:
-                for child_table_name in child_table_names:
-                    metadata = self.extract_resource_metadata(
-                        context, dlt_source_resource, load_info, dlt_pipeline, child_table_name
-                    )
+            if has_asset_def:
+                yield MaterializeResult(asset_key=asset_key, metadata=metadata)
 
-                    if has_asset_def:
-                        yield MaterializeResult(asset_key=child_table_name, metadata=metadata)
-
-                    else:
-                        yield AssetMaterialization(asset_key=child_table_name, metadata=metadata)
             else:
-                metadata = self.extract_resource_metadata(
-                    context, dlt_source_resource, load_info, dlt_pipeline
-                )
-
-                if has_asset_def:
-                    yield MaterializeResult(asset_key=asset_key, metadata=metadata)
-
-                else:
-                    yield AssetMaterialization(asset_key=asset_key, metadata=metadata)
+                yield AssetMaterialization(asset_key=asset_key, metadata=metadata)
