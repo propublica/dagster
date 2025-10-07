@@ -122,7 +122,7 @@ class DagsterDltResource(ConfigurableResource):
         base_metadata = {k: v for k, v in load_info_dict.items() if k in dlt_base_metadata_types}
         default_schema = dlt_pipeline.default_schema
         normalized_table_name = default_schema.naming.normalize_table_identifier(
-            str(resource.name)
+            str(resource.table_name) if not callable(resource.table_name) else resource.name
         )
         # job metadata for specific target `normalized_table_name`
         base_metadata["jobs"] = [
